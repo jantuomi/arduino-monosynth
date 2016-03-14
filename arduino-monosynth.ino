@@ -35,7 +35,10 @@
 //  Mozzi example uses COS waves for carrier and modulator
 //  Shit gets brutal very fast if you use a saw/square carrier
 //  Shit gets subtly more brutal if you use smaller wavetables (fewer samples per cycle)
-Oscil<SAW_ANALOGUE512_NUM_CELLS, AUDIO_RATE> oscCarrier(SAW_ANALOGUE512_DATA);
+Oscil<SAW_ANALOGUE512_NUM_CELLS, AUDIO_RATE> oscCarrierMaster(SAW_ANALOGUE512_DATA);
+Oscil<SAW_ANALOGUE512_NUM_CELLS, AUDIO_RATE> oscCarrierSlave1(SAW_ANALOGUE512_DATA);
+Oscil<SAW_ANALOGUE512_NUM_CELLS, AUDIO_RATE> oscCarrierSlave2(SAW_ANALOGUE512_DATA);
+
 Oscil<COS2048_NUM_CELLS, AUDIO_RATE> oscModulator(COS2048_DATA);
 Oscil<COS2048_NUM_CELLS, AUDIO_RATE> oscLFO(COS2048_DATA);
 
@@ -50,11 +53,14 @@ MIDI_CREATE_DEFAULT_INSTANCE();
 unsigned long vibrato = 0;
 float carrierFreq = 10.f;
 float modFreq = 10.f;
-float modDepth = 0;
+float modDepth = 0.5;
 float amplitude = 0.f;
 float modOffset = 1;
 byte lastnote = 0;
 int portSpeed = 100;
+
+float detuneCoefficient1 = 1;
+float detuneCoefficient2 = 1;
 
 float modOffsets[] = {
   4, 3.5, 3, 2.5,
@@ -77,7 +83,7 @@ void setup()
   MIDI.setHandleContinue(HandleContinue); 
 
   envelope.setADLevels(255, 174);
-  envelope.setTimes(10, 50, 20000, 200); // 20000 is so the note will sustain 20 seconds unless a noteOff comes
+  envelope.setTimes(10, 50, 50, 1000); // 20000 is so the note will sustain 20 seconds unless a noteOff comes
   aPortamento.setTime(50u);
   oscLFO.setFreq(10); // default frequency
   
@@ -150,8 +156,17 @@ void updateControl()
   MIDI.read();
   envelope.update();
   carrierFreq = Q16n16_to_float (aPortamento.next()); //NB presumably returns frequency as Q16n16
-  modFreq = carrierFreq * modOffset; 
-  oscCarrier.setFreq(carrierFreq);
+  modFreq = carrierFreq * modOffset;
+
+  const unsigned short cents = 40;
+  detuneCoefficient1 = 1 + 0.0005946 * cents;
+  detuneCoefficient2 = 1 - 0.0005946 * cents;
+
+  // set carrier frequencies
+  oscCarrierMaster.setFreq(carrierFreq);
+  oscCarrierSlave1.setFreq(carrierFreq * detuneCoefficient1);
+  oscCarrierSlave2.setFreq(carrierFreq * detuneCoefficient2);
+  
   oscModulator.setFreq(modFreq);
 }
 
@@ -159,7 +174,8 @@ int updateAudio()
 {
   vibrato = (unsigned long) (oscLFO.next() * oscModulator.next()) >> 7;
   vibrato *= (unsigned long) (carrierFreq * modDepth) >> 3;
-  return (int) ((oscCarrier.phMod(vibrato)) * (envelope.next())) >> 7;
+  int carrierSum = (oscCarrierMaster.phMod(vibrato) + oscCarrierSlave1.phMod(vibrato) + oscCarrierSlave2.phMod(vibrato)) >> 3;
+  return (int) (carrierSum * (envelope.next())) >> 8;
 }
 
 void loop()
