@@ -27,7 +27,7 @@
 #include <mozzi_fixmath.h>
 #include <Portamento.h>
 #include <tables/cos2048_int8.h> // table for Oscils to play
-#include <tables/square_analogue2048_int8.h> // table for Oscils to play
+#include <tables/saw_analogue512_int8.h> // table for Oscils to play
 
 // use #define for CONTROL_RATE, not a constant
 #define CONTROL_RATE 256 // powers of 2 please
@@ -35,13 +35,15 @@
 //  Mozzi example uses COS waves for carrier and modulator
 //  Shit gets brutal very fast if you use a saw/square carrier
 //  Shit gets subtly more brutal if you use smaller wavetables (fewer samples per cycle)
-Oscil<SQUARE_ANALOGUE2048_NUM_CELLS, AUDIO_RATE> oscCarrier(SQUARE_ANALOGUE2048_DATA);
+Oscil<SAW_ANALOGUE512_NUM_CELLS, AUDIO_RATE> oscCarrier(SAW_ANALOGUE512_DATA);
 Oscil<COS2048_NUM_CELLS, AUDIO_RATE> oscModulator(COS2048_DATA);
 Oscil<COS2048_NUM_CELLS, AUDIO_RATE> oscLFO(COS2048_DATA);
 
 // envelope generator
-ADSR <CONTROL_RATE> envelope;
+ADSR <CONTROL_RATE, AUDIO_RATE> envelope;
 Portamento <CONTROL_RATE>aPortamento;
+
+MIDI_CREATE_DEFAULT_INSTANCE();
 
 #define LED 13 // to see if MIDI is being recieved
 
@@ -75,7 +77,7 @@ void setup()
   MIDI.setHandleContinue(HandleContinue); 
 
   envelope.setADLevels(255, 174);
-  envelope.setTimes(10, 50, 20000, 10); // 20000 is so the note will sustain 20 seconds unless a noteOff comes
+  envelope.setTimes(10, 50, 20000, 200); // 20000 is so the note will sustain 20 seconds unless a noteOff comes
   aPortamento.setTime(50u);
   oscLFO.setFreq(10); // default frequency
   
@@ -164,4 +166,5 @@ void loop()
 {
   audioHook();
 } 
+
 
