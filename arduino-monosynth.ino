@@ -59,6 +59,9 @@ MIDI_CREATE_DEFAULT_INSTANCE();
 #define LED 13 // to see if MIDI is being recieved
 #define TABLE_TOGGLE 10
 
+// workaround for a idle buzzing bug
+int sustainKillTimer = 0;
+
 unsigned long vibrato = 0;
 float carrierFreq = 10.f;
 float modFreq = 10.f;
@@ -83,6 +86,8 @@ float modOffsets[] = {
   0, 0, 0
 }; // freq ratios corresponding to DP's preferred intervals of 7, 12, 7, 19, 24, 0, 12, -12, etc
 
+int attackTime, decayTime, sustainTime, releaseTime;
+
 void setup()
 {
   pinMode(LED, OUTPUT);
@@ -96,7 +101,13 @@ void setup()
   MIDI.setHandleProgramChange(HandleProgramChange);  
 
   envelope.setADLevels(255, 174);
-  envelope.setTimes(188, 345, 65000000, 345); // 20000 is so the note will sustain 20 seconds unless a noteOff comes
+
+  attackTime = 188;
+  decayTime = 345;
+  sustainTime = 65000000; // long enough
+  releaseTime = 345;
+  
+  envelope.setTimes(attackTime, decayTime, sustainTime, releaseTime); // 20000 is so the note will sustain 20 seconds unless a noteOff comes
   envelope.setSustainLevel(255);
   //aPortamento.setTime(50u);
   oscLFO.setFreq(10); // default frequency
@@ -119,6 +130,7 @@ void HandleNoteOn(byte channel, byte note, byte velocity)
   envelope.noteOn();
   oscLFO.setPhase(0);
   oscModulator.setPhase(0);
+  sustainKillTimer = -1;
   digitalWrite(LED, HIGH);
 }
 
@@ -127,6 +139,7 @@ void HandleNoteOff(byte channel, byte note, byte velocity)
   if (note == lastnote)
   {
     envelope.noteOff();
+    sustainKillTimer = releaseTime;
     digitalWrite(LED, LOW);
   }
 }
@@ -230,10 +243,15 @@ int updateAudio()
   }
 
   int total = (carrierSum * (envelope.next() >> 1)) >> 8;
-  if (abs(total) < 5)
-    return 0;
-  else
-    return total;
+  if (abs(total) < 5 || sustainKillTimer == 0)
+    total = 0;
+    
+  if (sustainKillTimer > 0) {
+    sustainKillTimer--;
+  }
+    
+  return total;
+  
 }
 
 void loop()
