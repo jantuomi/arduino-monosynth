@@ -50,6 +50,9 @@ enum TableType {
   Triangle
 } currentTable;
 
+const int8_t *tables[4] =
+  { COS512_DATA, SQUARE_ANALOGUE512_DATA, SAW_ANALOGUE512_DATA, TRIANGLE_ANALOGUE512_DATA };
+
 // envelope generator
 ADSR <CONTROL_RATE, AUDIO_RATE> envelope;
 Portamento <CONTROL_RATE>aPortamento;
@@ -72,8 +75,8 @@ byte lastnote = 0;
 //int portSpeed = 100;
 byte detuneCents = 0;
 
-byte tableToggleTimer = 0;
-byte tableToggleTimerMax = 1000;
+int tableToggleTimer = 0;
+int TABLE_TOGGLE_TIMER_MAX = 100;
 
 float detuneCoefficient1 = 1;
 float detuneCoefficient2 = 1;
@@ -168,42 +171,25 @@ void HandleControlChange (byte channel, byte number, byte value)
   }
 }
 
+void setTables(const int8_t *TABLE_NAME) {
+  for (int i = 0; i < sizeof(oscils)/sizeof(oscils[0]); i++) {
+    oscils[i].setTable(TABLE_NAME);
+  }
+}
+
 void readPotsAndUpdate() {
-  if (tableToggleTimer > tableToggleTimerMax) {
+  if (tableToggleTimer > TABLE_TOGGLE_TIMER_MAX) {
     byte toggled = digitalRead(TABLE_TOGGLE);
     digitalWrite(LED, toggled);
     if (toggled) {
       currentTable = (TableType)(((byte)currentTable + 1) % 4);
+      setTables(tables[(unsigned) currentTable]);
       tableToggleTimer = 0;
     }
   } else {
     tableToggleTimer++;
   }
-
-  /*
-  int pot0 = mozziAnalogRead(0);
-  if (currentTable != Cosine && pot0 < 256) {
-    oscCarrierMaster.setTable(COS512_DATA);
-    oscCarrierSlave1.setTable(COS512_DATA);
-    oscCarrierSlave2.setTable(COS512_DATA);
-    currentTable = Cosine;
-  } else if (currentTable != Saw && pot0 < 512) {
-    oscCarrierMaster.setTable(SAW_ANALOGUE512_DATA);
-    oscCarrierSlave1.setTable(SAW_ANALOGUE512_DATA);
-    oscCarrierSlave2.setTable(SAW_ANALOGUE512_DATA);
-    currentTable = Saw;
-  } else if (currentTable != Square && pot0 < 768) {
-    oscCarrierMaster.setTable(SQUARE_ANALOGUE512_DATA);
-    oscCarrierSlave1.setTable(SQUARE_ANALOGUE512_DATA);
-    oscCarrierSlave2.setTable(SQUARE_ANALOGUE512_DATA);
-    currentTable = Square;
-  } else if (currentTable != Triangle && pot0 <= 1024) {
-    oscCarrierMaster.setTable(TRIANGLE_ANALOGUE512_DATA);
-    oscCarrierSlave1.setTable(TRIANGLE_ANALOGUE512_DATA);
-    oscCarrierSlave2.setTable(TRIANGLE_ANALOGUE512_DATA);
-    currentTable = Triangle;
-  }
-  */
+  
   int pot1 = mozziAnalogRead(1);
   detuneCents = map(pot1, 0, 1024, 0, 100);
 }
@@ -221,8 +207,11 @@ void updateControl()
   detuneCoefficient1 = 1 + 0.0005946 * detuneCents;
   detuneCoefficient2 = 1 - 0.0005946 * detuneCents;
 
- 
-
+  /*
+  byte toggled = digitalRead(TABLE_TOGGLE);
+  digitalWrite(LED, toggled);
+  */
+  
   // set carrier frequencies
   oscils[0].setFreq(carrierFreq);
   oscils[1].setFreq(carrierFreq * detuneCoefficient1);
