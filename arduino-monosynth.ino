@@ -1,21 +1,16 @@
-/*  Example of a sound being triggered by MIDI input.
+/*  Digital MIDI monophonic synth
  *
- *  Demonstrates playing notes with Mozzi in response to MIDI input,
- *  using the standard Arduino MIDI library:
- *  http://playground.arduino.cc/Main/MIDILibrary
- *
- *  Mozzi help/discussion/announcements:
- *  https://groups.google.com/forum/#!forum/mozzi-users
- *
- *  Tim Barrass 2013.
- *  This example code is in the public domain.
- *
- *  sgreen - modified to use standard Arduino midi library, added saw wave, lowpass filter
- *  Audio output from pin 9 (pwm)
- *  Midi plug pin 2 (centre) to Arduino gnd, pin 5 to RX (0)
- *  http://www.philrees.co.uk/midiplug.htm
- *
- * dgreen - nutty portamento added!
+ *  Jan Tuomi 2016
+ *  This project is in the public domain.
+ *  Based on a public domain project by Tim Barrass, 2013.
+ *  
+ *  Connections:
+ *    PIN 9       - AUDIO OUT
+ *    RX          - MIDI SIGNAL IN
+ *    PIN 10      - WAVEFORM TOGGLE BUTTON
+ *    ANALOG 1    - DETUNE
+ *    ANALOG 2    - ATTACK
+ *    
  */
 
 #include <MIDI.h>
@@ -59,8 +54,10 @@ Portamento <CONTROL_RATE>aPortamento;
 
 MIDI_CREATE_DEFAULT_INSTANCE();
 
-#define LED 13 // to see if MIDI is being recieved
+#define LED 13 // to see if MIDI is being received
 #define TABLE_TOGGLE 10
+const uint8_t ANALOG_INPUTS[]
+  = {0, 1, 2, 3, 4, 5};
 
 // workaround for a idle buzzing bug
 int sustainKillTimer = 0;
@@ -75,11 +72,12 @@ byte lastnote = 0;
 //int portSpeed = 100;
 byte detuneCents = 0;
 
+int analog_values[6] = { 0 };
+
 int tableToggleTimer = 0;
 int TABLE_TOGGLE_TIMER_MAX = 100;
 
-float detuneCoefficient1 = 1;
-float detuneCoefficient2 = 1;
+float detuneCoefficients[] = {1, 1};
 
 float modOffsets[] = {
   4, 3.5, 3, 2.5,
@@ -178,6 +176,9 @@ void setTables(const int8_t *TABLE_NAME) {
 }
 
 void readPotsAndUpdate() {
+  /* Read digital inputs
+   *  i.e. waveform switch button
+   */
   if (tableToggleTimer > TABLE_TOGGLE_TIMER_MAX) {
     byte toggled = digitalRead(TABLE_TOGGLE);
     digitalWrite(LED, toggled);
@@ -189,9 +190,27 @@ void readPotsAndUpdate() {
   } else {
     tableToggleTimer++;
   }
-  
-  int pot1 = mozziAnalogRead(1);
-  detuneCents = map(pot1, 0, 1024, 0, 100);
+
+  /* Read analog inputs */
+  unsigned i;
+  for (i = 0; i < sizeof(ANALOG_INPUTS) / sizeof(ANALOG_INPUTS[0]); i++) {
+    analog_values[i] = mozziAnalogRead(i);
+  }
+
+  /* Map read values to corresponding variables */
+  updateDetune(analog_values[0]);
+  updateAttack(analog_values[1]);
+}
+
+void updateDetune(int analog) {
+  detuneCents = map(analog, 0, 1024, 0, 100);
+  detuneCoefficients[0] = 1 + 0.0005946 * detuneCents;
+  detuneCoefficients[1] = 1 - 0.0005946 * detuneCents;
+}
+
+void updateAttack(int analog) {
+  attackTime = map(analog, 0, 1024, 0, 1024);
+  envelope.setAttackTime(attackTime);
 }
 
 void updateControl()
@@ -204,18 +223,10 @@ void updateControl()
    // update oscil types
   readPotsAndUpdate();
   
-  detuneCoefficient1 = 1 + 0.0005946 * detuneCents;
-  detuneCoefficient2 = 1 - 0.0005946 * detuneCents;
-
-  /*
-  byte toggled = digitalRead(TABLE_TOGGLE);
-  digitalWrite(LED, toggled);
-  */
-  
   // set carrier frequencies
   oscils[0].setFreq(carrierFreq);
-  oscils[1].setFreq(carrierFreq * detuneCoefficient1);
-  oscils[2].setFreq(carrierFreq * detuneCoefficient2);
+  oscils[1].setFreq(carrierFreq * detuneCoefficients[0]);
+  oscils[2].setFreq(carrierFreq * detuneCoefficients[1]);
   
   oscModulator.setFreq(modFreq);
 }
