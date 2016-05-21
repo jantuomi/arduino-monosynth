@@ -8,9 +8,12 @@
  *    PIN 9       - AUDIO OUT
  *    RX          - MIDI SIGNAL IN
  *    PIN 10      - WAVEFORM TOGGLE BUTTON
- *    ANALOG 1    - DETUNE
- *    ANALOG 2    - ATTACK
- *    
+ *    ANALOG 0    - DETUNE
+ *    ANALOG 1    - ATTACK
+ *    ANALOG 2	  - DECAY
+ *    ANALOG 3    - SUSTAIN
+ *    ANALOG 4    - RELEASE
+ *    ANALOG 5    - VIBRATO AMP
  */
 
 #include <MIDI.h>
@@ -21,10 +24,12 @@
 #include <ADSR.h>
 #include <mozzi_fixmath.h>
 #include <Portamento.h>
-#include <tables/cos512_int8.h> // table for Oscils to play
+
+/* Include waveform tables for oscillators */
+#include <tables/cos512_int8.h> 
 #include <tables/square_analogue512_int8.h>
 #include <tables/triangle_analogue512_int8.h>
-#include <tables/saw_analogue512_int8.h> // table for Oscils to play
+#include <tables/saw_analogue512_int8.h> 
 
 // use #define for CONTROL_RATE, not a constant
 #define CONTROL_RATE 256 // powers of 2 please
@@ -32,12 +37,17 @@
 //  Mozzi example uses COS waves for carrier and modulator
 //  Shit gets brutal very fast if you use a saw/square carrier
 //  Shit gets subtly more brutal if you use smaller wavetables (fewer samples per cycle)
+
+/* Use an array of three oscillators
+ * The first will get double the amplitude */
 Oscil<SAW_ANALOGUE512_NUM_CELLS, AUDIO_RATE> oscils[3] = 
   {(SAW_ANALOGUE512_DATA), (SAW_ANALOGUE512_DATA), (SAW_ANALOGUE512_DATA)};
 
+/* Add a modulation and LFO oscillator */
 Oscil<COS512_NUM_CELLS, AUDIO_RATE> oscModulator(COS512_DATA);
 Oscil<COS512_NUM_CELLS, AUDIO_RATE> oscLFO(COS512_DATA);
 
+/* Keep track of the currently selected waveform with an enum */
 enum TableType {
   Cosine,
   Square,
@@ -45,16 +55,22 @@ enum TableType {
   Triangle
 } currentTable;
 
+/* Store table data in a table for nice access */
 const int8_t *tables[4] =
   { COS512_DATA, SQUARE_ANALOGUE512_DATA, SAW_ANALOGUE512_DATA, TRIANGLE_ANALOGUE512_DATA };
 
-// envelope generator
+/* ADSR envelope for tuning the tone */
 ADSR <CONTROL_RATE, AUDIO_RATE> envelope;
 Portamento <CONTROL_RATE>aPortamento;
 
 MIDI_CREATE_DEFAULT_INSTANCE();
 
-#define LED 13 // to see if MIDI is being received
+/* Pin constants */
+
+/* LED is used for waveform toggle visualisation */
+#define LED 13
+
+/* Table toggle button for changing waveform */
 #define TABLE_TOGGLE 10
 const uint8_t ANALOG_INPUTS[]
   = {0, 1, 2, 3, 4, 5};
@@ -62,7 +78,6 @@ const uint8_t ANALOG_INPUTS[]
 // workaround for a idle buzzing bug
 int sustainKillTimer = 0;
 
-unsigned long vibrato = 0;
 float carrierFreq = 10.f;
 float modFreq = 10.f;
 float modDepth = 0.5;
@@ -87,7 +102,12 @@ float modOffsets[] = {
   0, 0, 0
 }; // freq ratios corresponding to DP's preferred intervals of 7, 12, 7, 19, 24, 0, 12, -12, etc
 
-int attackTime, decayTime, sustainTime, releaseTime;
+int attackTime, decayTime, releaseTime;
+int sustainLevel;
+float vibratoAmp = 0.f;
+
+/* Maximum value for int */
+const int SUSTAIN_TIME = (~0 >> 1);
 
 void setup()
 {
@@ -105,12 +125,11 @@ void setup()
 
   attackTime = 188;
   decayTime = 345;
-  sustainTime = 65000000; // long enough
+  sustainLevel = 255;
   releaseTime = 345;
   
-  envelope.setTimes(attackTime, decayTime, sustainTime, releaseTime); // 20000 is so the note will sustain 20 seconds unless a noteOff comes
+  envelope.setTimes(attackTime, decayTime, SUSTAIN_TIME, releaseTime); // 20000 is so the note will sustain 20 seconds unless a noteOff comes
   envelope.setSustainLevel(255);
-  //aPortamento.setTime(50u);
   oscLFO.setFreq(10); // default frequency
   
   startMozzi(CONTROL_RATE); 
@@ -200,6 +219,10 @@ void readPotsAndUpdate() {
   /* Map read values to corresponding variables */
   updateDetune(analog_values[0]);
   updateAttack(analog_values[1]);
+  updateDecay(analog_values[2]);
+  updateSustain(analog_values[3]);
+  updateRelease(analog_values[4]);
+  updateVibrato(analog_values[5]);
 }
 
 void updateDetune(int analog) {
@@ -211,6 +234,25 @@ void updateDetune(int analog) {
 void updateAttack(int analog) {
   attackTime = map(analog, 0, 1024, 0, 1024);
   envelope.setAttackTime(attackTime);
+}
+
+void updateDecay(int analog) {
+  decayTime = map(analog, 0, 1024, 0, 1024);
+  envelope.setDecayTime(decayTime);
+}
+
+void updateSustain(int analog) {
+  sustainLevel = map(analog, 0, 1024, 0, 255);
+  envelope.setSustainLevel(sustainLevel);
+}
+
+void updateRelease(int analog) {
+  sustainTime = map(analog, 0, 1024, 0, 1024);
+  envelope.setReleaseTime(releaseTime);
+}
+
+void updateVibrato(int analog) {
+  vibratoAmp = ((float) map(analog, 0, 1024, 0, 100) ) / 100.f;
 }
 
 void updateControl()
@@ -233,13 +275,14 @@ void updateControl()
 
 int updateAudio()
 {
-  vibrato = (unsigned long) (oscLFO.next() * oscModulator.next()) >> 7;
-  vibrato *= (unsigned long) (carrierFreq * modDepth) >> 3;
-  //int carrierSum = (oscCarrierMaster.phMod(vibrato) >> 3) + (oscCarrierSlave1.phMod(vibrato) >> 3) + (oscCarrierSlave2.phMod(vibrato) >> 3);
-
+  /* Sum together the signals from the 3 oscillators */
   int carrierSum = 0;
   for (int i = 0; i < sizeof(oscils)/sizeof(oscils[0]); i++) {
-    carrierSum += (oscils[i].next() >> 3);
+    /* The carrier signal gets double the amplitude */
+    if (i == 0)
+      carrierSum += 1.5f * (oscils[i].next() >> 3);
+    else
+      carrierSum += 0.75f * (oscils[i].next() >> 3);
   }
 
   int total = (carrierSum * (envelope.next() >> 1)) >> 8;
